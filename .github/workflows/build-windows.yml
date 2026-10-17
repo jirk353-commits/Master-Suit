@@ -84,6 +84,10 @@ jobs:
 
           Run the setup and click **Next > Install > Finish**. Then rescan plugins in your DAW.
 
+          ### New in v1.1.0
+          - Only the modules you use are shown: EQ, DYNAMICS and LOUDNESS are always there, REBALANCE / EXCITER / IMAGER are added with **+ ADD MODULE** and removed with **x**
+          - The 32-bit setup now warns on 64-bit Windows (Cubase only loads the 64-bit version)
+
           ### Inside Master Suite
           - **EQ** (always on): 6-band parametric, every band works on Stereo / Mid / Side / Left / Right, band LISTEN, live spectrum (mid + side)
           - **DYNAMICS** (always on): 4-band clean compressor + GLUE bus compressor, flat with no colour, per-band channel mode, band SOLO
@@ -94,5 +98,5 @@ jobs:
           - LISTEN to Stereo / Mid / Side / Left / Right at the output
           NOTES
           sed -i 's/^          //' notes.md
-          gh release create v1.0.0 out/${FILE_BASE}-Setup-64bit.exe out/${FILE_BASE}-Setup-32bit.exe \
-            --title "${PLUGIN_NAME} v1.0.0 (64-bit + 32-bit)" --notes-file notes.md --latest
+          gh release create v1.1.0 out/${FILE_BASE}-Setup-64bit.exe out/${FILE_BASE}-Setup-32bit.exe \
+            --title "${PLUGIN_NAME} v1.1.0 (64-bit + 32-bit)" --notes-file notes.md --latest

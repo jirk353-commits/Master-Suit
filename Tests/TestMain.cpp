@@ -285,6 +285,15 @@ int main (int argc, char** argv)
     }
 
 #if MS_SHOTS
+    // default view: only the 3 core modules + ADD MODULE
+    {
+        auto p = make (fs);
+        std::unique_ptr<AudioProcessorEditor> ed (p->createEditor());
+        ed->setVisible (true);
+        auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
+        File f (File::getCurrentWorkingDirectory().getChildFile ("shot_default.png"));
+        f.deleteFile(); FileOutputStream os (f); PNGImageFormat().writeImageToStream (img, os);
+    }
     // screenshots of every page
     {
         auto p = make (fs);

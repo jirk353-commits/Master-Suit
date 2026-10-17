@@ -2,7 +2,7 @@
 ; GitHub Actions calls it with:
 ;   /DAppName="Opto Glow" /DArch=64 (or 32) /DAppIdGuid=... /DArtDir=...\Installer /DPluginDir=... /DOutName=...
 
-#define AppVersion   "1.0.0"
+#define AppVersion   "1.1.0"
 #define AppPublisher "ROHIT JI"
 #define AppIdFull    "{{" + AppIdGuid + "}"
 #define ArchLabel    Arch + "-bit"
@@ -68,3 +68,16 @@ Source: "{#PluginDir}\*"; DestDir: "{app}\{#AppName}.vst3"; Flags: ignoreversion
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\{#AppName}.vst3"
+
+#if Arch == "32"
+[Code]
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+  if IsWin64 then
+    Result := MsgBox('This is the 32-bit version.' + #13#10 + #13#10 +
+      'Your Windows is 64-bit: Cubase, Studio One and 64-bit FL Studio need the 64-BIT setup (Master-Suite-Setup-64bit.exe).' + #13#10 +
+      'Cubase cannot load 32-bit plugins at all.' + #13#10 + #13#10 +
+      'Install the 32-bit version anyway?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+end;
+#endif

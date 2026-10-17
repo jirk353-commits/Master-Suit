@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(MasterSuite VERSION 1.0.0 LANGUAGES C CXX)
+project(MasterSuite VERSION 1.1.0 LANGUAGES C CXX)
 
 # Static MSVC runtime: no Visual C++ Redistributable needed on the user PC
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

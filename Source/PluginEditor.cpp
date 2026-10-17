@@ -1174,74 +1174,114 @@ void MasterMeter::paint (Graphics& g)
 
 //==============================================================================
 ModuleTabs::ModuleTabs (MasterSuiteProcessor& p) : proc (p) { startTimerHz (10); }
-Rectangle<float> ModuleTabs::tab (int i) const
+
+/** only modules that are in the chain get a tab; the rest live behind "+ ADD MODULE" */
+std::vector<int> ModuleTabs::visible() const
 {
-    const float gap = 14.0f, w = ((float) getWidth() - gap * 5) / 6.0f;
-    return { (float) i * (w + gap), 0.0f, w, (float) getHeight() };
+    std::vector<int> v;
+    for (int i = 0; i < (int) Mod::Count; ++i) if (proc.isInserted ((Mod) i)) v.push_back (i);
+    return v;
 }
-Rectangle<float> ModuleTabs::led (int i) const { auto t = tab (i); return { t.getX() + 10, t.getCentreY() - 8, 16, 16 }; }
-Rectangle<float> ModuleTabs::cross (int i) const { auto t = tab (i); return { t.getRight() - 22, t.getY() + 4, 16, 16 }; }
+bool ModuleTabs::canAdd() const { return visible().size() < (size_t) Mod::Count; }
+Rectangle<float> ModuleTabs::addButton() const
+{
+    if (! canAdd()) return {};
+    const auto v = visible(); const float gap = 12.0f, addW = 150.0f;
+    const float w = jmin (200.0f, ((float) getWidth() - addW - gap * (float) v.size()) / (float) v.size());
+    return { (float) v.size() * (w + gap), 0.0f, addW, (float) getHeight() };
+}
+Rectangle<float> ModuleTabs::tab (int slot) const
+{
+    const auto v = visible(); const float gap = 12.0f, addW = canAdd() ? 150.0f : 0.0f;
+    const float n = (float) v.size();
+    const float w = jmin (200.0f, ((float) getWidth() - addW - gap * (canAdd() ? n : n - 1)) / n);
+    return { (float) slot * (w + gap), 0.0f, w, (float) getHeight() };
+}
+Rectangle<float> ModuleTabs::led (int slot) const { auto t = tab (slot); return { t.getX() + 10, t.getCentreY() - 8, 16, 16 }; }
+Rectangle<float> ModuleTabs::cross (int slot) const { auto t = tab (slot); return { t.getRight() - 22, t.getY() + 4, 16, 16 }; }
 
 void ModuleTabs::paint (Graphics& g)
 {
-    for (int i = 0; i < 6; ++i)
+    const auto v = visible();
+    for (int s = 0; s < (int) v.size(); ++s)
     {
-        const auto m = (Mod) i; const auto t = tab (i); const auto c = modColour (m);
-        const bool ins = proc.isInserted (m), on = ins && proc.get (String (modKey (m)) + "_on") > 0.5f;
+        const int i = v[(size_t) s];
+        const auto m = (Mod) i; const auto t = tab (s); const auto c = modColour (m);
+        const bool on = proc.get (String (modKey (m)) + "_on") > 0.5f;
         const bool sel = i == selected;
-        g.setColour (sel ? col::panelHi : (i == hover ? Colour (0xff1f2328) : col::panel));
+        g.setColour (sel ? col::panelHi : (s == hover ? Colour (0xff1f2328) : col::panel));
         g.fillRoundedRectangle (t, 6);
         g.setColour (sel ? c : col::edge); g.drawRoundedRectangle (t.reduced (0.5f), 6, sel ? 1.6f : 1.0f);
         if (sel) { g.setColour (c); g.fillRoundedRectangle (t.withTop (t.getBottom() - 4).reduced (8, 0), 2); }
-        if (i < 5)
+        if (s < (int) v.size() - 1)
         {
             g.setColour (col::textDim.withAlpha (0.6f));
-            Path a; const float ax = t.getRight() + 3, ay = t.getCentreY(); a.addTriangle (ax, ay - 4, ax + 8, ay, ax, ay + 4); g.fillPath (a);
+            Path a; const float ax = t.getRight() + 2, ay = t.getCentreY(); a.addTriangle (ax, ay - 4, ax + 8, ay, ax, ay + 4); g.fillPath (a);
         }
-        if (! ins)
-        {
-            g.setColour (col::textDim.withAlpha (0.55f)); g.setFont (font (13.0f));
-            g.drawText ("+  " + String (modName (m)), t, Justification::centred, false);
-            g.setFont (font (9.5f, false));
-            g.drawText ("click to add", t.withTrimmedTop (30), Justification::centred, false);
-            continue;
-        }
-        const auto l = led (i);
+        const auto l = led (s);
         if (on) { g.setColour (c.withAlpha (0.3f)); g.fillEllipse (l.expanded (4)); }
         g.setColour (on ? c : Colour (0xff3b4047)); g.fillEllipse (l);
         g.setColour (Colours::black.withAlpha (0.6f)); g.drawEllipse (l, 1.0f);
         g.setColour (on ? col::text : col::textDim); g.setFont (font (14.0f));
-        g.drawText (modName (m), t.withTrimmedLeft (34).withTrimmedBottom (14), Justification::centredLeft, false);
+        g.drawText (modName (m), t.withTrimmedLeft (34).withTrimmedRight (20).withTrimmedBottom (14), Justification::centredLeft, true);
         g.setColour (col::textDim.withAlpha (0.7f)); g.setFont (font (9.5f, false));
-        g.drawText (modIsCore (m) ? "core - always in chain" : (on ? "optional" : "optional - bypassed"), t.withTrimmedLeft (34).withTrimmedTop (24), Justification::centredLeft, false);
+        g.drawText (modIsCore (m) ? (on ? "core" : "core - bypassed") : (on ? "add-on" : "add-on - bypassed"),
+                    t.withTrimmedLeft (34).withTrimmedTop (24), Justification::centredLeft, true);
         if (! modIsCore (m))
         {
-            const auto x = cross (i);
-            g.setColour (col::textDim.withAlpha (hover == i ? 1.0f : 0.5f));
+            const auto x = cross (s);
+            g.setColour (col::textDim.withAlpha (hover == s ? 1.0f : 0.5f));
             g.drawLine (x.getX() + 4, x.getY() + 4, x.getRight() - 4, x.getBottom() - 4, 1.6f);
             g.drawLine (x.getRight() - 4, x.getY() + 4, x.getX() + 4, x.getBottom() - 4, 1.6f);
         }
     }
+    if (canAdd())
+    {
+        const auto a = addButton();
+        g.setColour (hover == 99 ? Colour (0xff23272d) : Colour (0xff181b1f)); g.fillRoundedRectangle (a, 6);
+        g.setColour (col::textDim.withAlpha (0.6f));
+        Path dash; dash.addRoundedRectangle (a.reduced (0.5f), 6);
+        float dl[] = { 5.0f, 4.0f }; PathStrokeType (1.0f).createDashedStroke (dash, dash, dl, 2);
+        g.fillPath (dash);
+        g.setColour (hover == 99 ? col::text : col::textDim); g.setFont (font (13.5f));
+        g.drawText ("+  ADD MODULE", a, Justification::centred, false);
+    }
 }
 void ModuleTabs::mouseMove (const MouseEvent& e)
 {
-    int h = -1; for (int i = 0; i < 6; ++i) if (tab (i).contains (e.position)) h = i;
+    int h = -1; const auto v = visible();
+    for (int s = 0; s < (int) v.size(); ++s) if (tab (s).contains (e.position)) h = s;
+    if (canAdd() && addButton().contains (e.position)) h = 99;
     if (h != hover) { hover = h; repaint(); }
 }
 void ModuleTabs::mouseDown (const MouseEvent& e)
 {
-    for (int i = 0; i < 6; ++i)
+    if (canAdd() && addButton().contains (e.position))
     {
-        if (! tab (i).contains (e.position)) continue;
-        const auto m = (Mod) i;
-        if (! proc.isInserted (m)) { proc.setInserted (m, true); selected = i; if (onSelect) onSelect (i); repaint(); return; }
-        if (! modIsCore (m) && cross (i).expanded (4).contains (e.position))
+        PopupMenu menu;
+        for (int i = 0; i < (int) Mod::Count; ++i)
+            if (! proc.isInserted ((Mod) i)) menu.addItem (i + 1, String ("Add ") + modName ((Mod) i));
+        menu.showMenuAsync (PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (addButton().toNearestInt())),
+                            [this] (int r)
+                            {
+                                if (r <= 0) return;
+                                proc.setInserted ((Mod) (r - 1), true);
+                                selected = r - 1; if (onSelect) onSelect (selected); repaint();
+                            });
+        return;
+    }
+    const auto v = visible();
+    for (int s = 0; s < (int) v.size(); ++s)
+    {
+        if (! tab (s).contains (e.position)) continue;
+        const int i = v[(size_t) s]; const auto m = (Mod) i;
+        if (! modIsCore (m) && cross (s).expanded (4).contains (e.position))
         {
-            proc.setInserted (m, false);
+            proc.setInserted (m, false);   // removed from the chain and from the screen
             if (selected == i) { selected = 0; if (onSelect) onSelect (0); }
-            repaint(); return;
+            hover = -1; repaint(); return;
         }
-        if (led (i).expanded (6).contains (e.position))
+        if (led (s).expanded (6).contains (e.position))
         {
             const String id = String (modKey (m)) + "_on";
             proc.setParam (id, proc.get (id) > 0.5f ? 0.0f : 1.0f); repaint(); return;

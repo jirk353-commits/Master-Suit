@@ -267,9 +267,12 @@ public:
     std::function<void (int)> onSelect;
 private:
     void timerCallback() override { repaint(); }
-    juce::Rectangle<float> tab (int i) const;
-    juce::Rectangle<float> led (int i) const;
-    juce::Rectangle<float> cross (int i) const;
+    std::vector<int> visible() const;
+    bool canAdd() const;
+    juce::Rectangle<float> addButton() const;
+    juce::Rectangle<float> tab (int slot) const;
+    juce::Rectangle<float> led (int slot) const;
+    juce::Rectangle<float> cross (int slot) const;
     MasterSuiteProcessor& proc; int hover = -1;
 };
 } // namespace ui
