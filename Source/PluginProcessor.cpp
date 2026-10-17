@@ -230,6 +230,7 @@ void MasterSuiteProcessor::prepareToPlay (double sampleRate, int block)
     outGain.setCurrentAndTargetValue (ms::dbToGain (gOut()));
     luGain.setCurrentAndTargetValue (ms::dbToGain (luGainP()));
     fA.assign ((size_t) jmax (1, block), 0.0f); fB.assign ((size_t) jmax (1, block), 0.0f);
+    rScratch.assign ((size_t) jmax (1, block), 0.0f);
     corrCoef = (float) (1.0 - std::exp (-1.0 / (0.3 * fs)));
     corrAcc[0] = corrAcc[1] = corrAcc[2] = 0;
     pullParams();
@@ -285,13 +286,44 @@ void MasterSuiteProcessor::pullParams()
 }
 
 //==============================================================================
+void MasterSuiteProcessor::processModule (Mod m, float* L, float* R, int n, bool on)
+{
+    switch (m)
+    {
+        case Mod::EQ:        if (on) for (int i = 0; i < n; ++i) eq.process (L[i], R[i]); break;
+        case Mod::Rebalance: if (on) for (int i = 0; i < n; ++i) rb.process (L[i], R[i]); break;
+        case Mod::Dynamics:  if (on) for (int i = 0; i < n; ++i) dyn.process (L[i], R[i]); break;
+        case Mod::Imager:    if (on) for (int i = 0; i < n; ++i) im.process (L[i], R[i]); break;
+        case Mod::Exciter:
+        {
+            // the oversampler always runs, so latency never changes when the exciter is added or removed
+            float* ch[2] = { L, R };
+            for (int start = 0; start < n; start += osMax)
+            {
+                const int len = jmin (osMax, n - start);
+                dsp::AudioBlock<float> blk (ch, 2, (size_t) start, (size_t) len);
+                auto up = os.processSamplesUp (blk);
+                if (on)
+                {
+                    float* uL = up.getChannelPointer (0); float* uR = up.getChannelPointer (1);
+                    for (size_t i = 0; i < up.getNumSamples(); ++i) ex.process (uL[i], uR[i]);
+                }
+                os.processSamplesDown (blk);
+            }
+            break;
+        }
+        default: break;
+    }
+}
+
+//==============================================================================
 void MasterSuiteProcessor::processBlock (AudioBuffer<float>& buffer, MidiBuffer&)
 {
     ScopedNoDenormals noDenormals;
     const int n = buffer.getNumSamples();
     const int nch = buffer.getNumChannels();
     if (n == 0 || nch == 0) return;
-    if ((int) fA.size() < n) { fA.assign ((size_t) n, 0.0f); fB.assign ((size_t) n, 0.0f); }   // host sent a bigger block
+    if ((int) fA.size() < n) { fA.assign ((size_t) n, 0.0f); fB.assign ((size_t) n, 0.0f); rScratch.assign ((size_t) n, 0.0f); }   // host sent a bigger block
 
     pullParams();
     inGain.setTargetValue (ms::dbToGain (gIn()));
@@ -311,44 +343,38 @@ void MasterSuiteProcessor::processBlock (AudioBuffer<float>& buffer, MidiBuffer&
     float* L = buffer.getWritePointer (0);
     float* R = nch > 1 ? buffer.getWritePointer (1) : nullptr;
 
-    // ---- stage 1: input, EQ, rebalance, dynamics ----
+    if (R == nullptr)
+    {   // mono track: run the chain in stereo on a copy, fold back at the end
+        if ((int) rScratch.size() < n) rScratch.assign ((size_t) n, 0.0f);
+        std::copy (L, L + n, rScratch.begin());
+        R = rScratch.data();
+    }
+
+    // ---- input ----
     float inPk = 0;
     for (int i = 0; i < n; ++i)
     {
         const float g = inGain.getNextValue();
-        float l = L[i] * g, r = (R ? R[i] : L[i]) * g;
-        inPk = std::max ({ inPk, std::abs (l), std::abs (r) });
-        fA[(size_t) i] = 0.5f * (l + r); fB[(size_t) i] = 0.5f * (l - r);
-        if (eqOn) eq.process (l, r);
-        if (rbOn) rb.process (l, r);
-        if (dynOn) dyn.process (l, r);
-        L[i] = l; if (R) R[i] = r;
+        L[i] *= g; R[i] *= g;
+        inPk = std::max ({ inPk, std::abs (L[i]), std::abs (R[i]) });
+        fA[(size_t) i] = 0.5f * (L[i] + R[i]); fB[(size_t) i] = 0.5f * (L[i] - R[i]);
     }
     preFifo.push (fA.data(), fB.data(), n);
 
-    // ---- stage 2: exciter at 2x (the oversampler always runs so latency never changes) ----
-    if (R != nullptr)
+    // ---- the movable modules, in the order chosen on the tabs ----
+    const bool onFlag[(int) Mod::Count] = { eqOn, rbOn, dynOn, exOn, imOn, luOn };
+    for (int k = 0; k < numMovable; ++k)
     {
-        for (int start = 0; start < n; start += osMax)
-        {
-            const int len = jmin (osMax, n - start);
-            dsp::AudioBlock<float> blk (buffer.getArrayOfWritePointers(), 2, (size_t) start, (size_t) len);
-            auto up = os.processSamplesUp (blk);
-            if (exOn)
-            {
-                float* uL = up.getChannelPointer (0); float* uR = up.getChannelPointer (1);
-                for (size_t i = 0; i < up.getNumSamples(); ++i) ex.process (uL[i], uR[i]);
-            }
-            os.processSamplesDown (blk);
-        }
+        const int m = order[k].load();
+        processModule ((Mod) m, L, R, n, onFlag[m]);
     }
 
-    // ---- stage 3: imager, maximizer, meters, listen ----
+    // ---- maximizer (always last), meters, listen ----
     float outPk = 0;
+    const bool mono = R == rScratch.data();
     for (int i = 0; i < n; ++i)
     {
-        float l = L[i], r = R ? R[i] : L[i];
-        if (imOn) im.process (l, r);
+        float l = L[i], r = R[i];
         const float g = luGain.getNextValue();
         l *= g; r *= g;
         lim.process (l, r);
@@ -362,8 +388,8 @@ void MasterSuiteProcessor::processBlock (AudioBuffer<float>& buffer, MidiBuffer&
         fA[(size_t) i] = l; fB[(size_t) i] = r;
         float ol, orr;
         ms::ChanIO::listen ((Chan) listen, l, r, ol, orr);
-        L[i] = ol; if (R) R[i] = orr;
-        else L[i] = 0.5f * (ol + orr);
+        if (mono) L[i] = 0.5f * (ol + orr);
+        else { L[i] = ol; R[i] = orr; }
     }
     scopeFifo.push (fA.data(), fB.data(), n);
     for (int i = 0; i < n; ++i) { const float l = fA[(size_t) i], r = fB[(size_t) i]; fA[(size_t) i] = 0.5f * (l + r); fB[(size_t) i] = 0.5f * (l - r); }
@@ -413,10 +439,20 @@ void MasterSuiteProcessor::setCurrentProgram (int index)
     for (auto& kv : presets()[(size_t) index].values) setParam (kv.first, kv.second);
 }
 
+void MasterSuiteProcessor::setOrder (const std::array<int, numMovable>& o)
+{
+    // accept only a real permutation of the movable modules
+    bool seen[numMovable] {};
+    for (int v : o) { if (v < 0 || v >= numMovable || seen[v]) return; seen[v] = true; }
+    for (int i = 0; i < numMovable; ++i) order[i].store (o[(size_t) i]);
+}
+
 void MasterSuiteProcessor::getStateInformation (MemoryBlock& dest)
 {
     auto state = apvts.copyState();
     state.setProperty ("preset", currentPreset, nullptr);
+    String ord; for (int i = 0; i < numMovable; ++i) ord << order[i].load() << (i < numMovable - 1 ? "," : "");
+    state.setProperty ("order", ord, nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, dest);
 }
 
@@ -427,6 +463,10 @@ void MasterSuiteProcessor::setStateInformation (const void* data, int size)
         {
             auto vt = ValueTree::fromXml (*xml);
             currentPreset = vt.getProperty ("preset", 0);
+            StringArray parts; parts.addTokens (vt.getProperty ("order", "0,1,2,3,4").toString(), ",", {});
+            std::array<int, numMovable> o { 0, 1, 2, 3, 4 };
+            if (parts.size() == numMovable) for (int i = 0; i < numMovable; ++i) o[(size_t) i] = parts[i].getIntValue();
+            setOrder (o);
             apvts.replaceState (vt);
         }
 }

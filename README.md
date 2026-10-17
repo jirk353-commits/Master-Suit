@@ -17,7 +17,7 @@ A mastering suite VST3 for Windows (64-bit and 32-bit).
 | **IMAGER** | optional | 4-band width, vectorscope, **correlation meter**, per-band phase check (red when a band goes below 0), width-by-frequency view. |
 | **LOUDNESS** | yes | EBU R128 meter (integrated, short-term, momentary, LRA, true peak) + true-peak maximizer. Targets: Spotify, Spotify Loud, YouTube, Apple Music, Amazon Music, Tidal, Deezer, SoundCloud, CD/Club, Custom. **MATCH TARGET** sets the gain for you. |
 
-Optional modules are added with **+** on their tab and removed with **x**. Every module has an ON switch.
+Optional modules are added with **+ ADD MODULE** and removed with **x**. Drag a tab left / right to change the processing order (LOUDNESS always stays last). Every module has an ON switch.
 The three crossovers are shared by all multiband modules (drag them on any band graph).
 The **LISTEN** switch at the top lets you monitor Stereo / Mid / Side / Left / Right.
 

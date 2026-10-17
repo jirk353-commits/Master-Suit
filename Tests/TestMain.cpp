@@ -264,6 +264,36 @@ int main (int argc, char** argv)
         }
         check (ok, "all presets stable at 44.1 / 48 / 96 kHz");
     }
+    // ---------- module order can be changed ----------
+    {
+        auto run1 = [&] (std::array<int, 5> order)
+        {
+            auto p = make (fs); neutral (*p); p->setInserted (Mod::Exciter, true);
+            for (int i = 1; i <= 4; ++i) setP (*p, ids::b ("ex", i, "drive"), 80);
+            setP (*p, "eq1_on", 1); setP (*p, "eq1_type", 4); setP (*p, "eq1_freq", 300);   // steep high cut
+            p->setOrder (order); p->prepareToPlay (fs, 512);
+            return run (*p, sine (fs, 200, 0.4f, 0.4f, 1.0));
+        };
+        auto a = run1 ({ 0, 1, 2, 3, 4 });      // EQ before exciter: harmonics stay
+        auto b = run1 ({ 3, 0, 1, 2, 4 });      // exciter first, EQ cuts its harmonics
+        auto hf = [&] (const Stereo& o) { ms::Biquad hp; ms::designEq (hp, ms::EqType::LowCut, fs, 1500, 0, 0.7); std::vector<float> y (o.l.size());
+                                          for (size_t i = 0; i < y.size(); ++i) y[i] = hp.process (0, o.l[i]); return rmsDb (y, 24000, 48000); };
+        check (hf (a) - hf (b) > 6.0f, "changing the module order changes the sound (" + String (hf (a) - hf (b), 1) + " dB more highs with EQ first)");
+        auto p = make (fs); p->setOrder ({ 4, 3, 2, 1, 0 });
+        MemoryBlock mb; p->getStateInformation (mb);
+        auto q = make (fs); q->setStateInformation (mb.getData(), (int) mb.getSize());
+        check (q->getOrder() == std::array<int, 5> { 4, 3, 2, 1, 0 }, "module order is saved with the project");
+        p->setOrder ({ 0, 0, 1, 2, 3 });
+        check (p->getOrder() == std::array<int, 5> { 4, 3, 2, 1, 0 }, "invalid order is ignored");
+    }
+    // ---------- mono track ----------
+    {
+        auto p = make (fs); neutral (*p); p->setPlayConfigDetails (1, 1, fs, 512); p->prepareToPlay (fs, 512);
+        AudioBuffer<float> b (1, 512); MidiBuffer midi; bool ok = true;
+        for (int k = 0; k < 50; ++k) { for (int i = 0; i < 512; ++i) b.setSample (0, i, 0.1f * std::sin ((float) (k * 512 + i) * 0.05f)); p->processBlock (b, midi);
+            for (int i = 0; i < 512; ++i) ok &= std::isfinite (b.getSample (0, i)) && std::abs (b.getSample (0, i)) < 0.2f; }
+        check (ok, "mono tracks work");
+    }
     // ---------- CPU: everything inserted ----------
     {
         auto p = make (fs); p->setInserted (Mod::Exciter, true); p->setInserted (Mod::Imager, true); p->setInserted (Mod::Rebalance, true);
@@ -292,6 +322,33 @@ int main (int argc, char** argv)
         ed->setVisible (true);
         auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
         File f (File::getCurrentWorkingDirectory().getChildFile ("shot_default.png"));
+        f.deleteFile(); FileOutputStream os (f); PNGImageFormat().writeImageToStream (img, os);
+    }
+    // drag a tab: move EXCITER in front of EQ
+    {
+        auto p = make (fs);
+        p->setInserted (Mod::Exciter, true); p->setInserted (Mod::Imager, true);
+        std::unique_ptr<AudioProcessorEditor> ed (p->createEditor()); ed->setVisible (true);
+        ui::ModuleTabs* tabs = nullptr;
+        std::function<void (Component*)> find = [&] (Component* c) { if (auto* t = dynamic_cast<ui::ModuleTabs*> (c)) tabs = t; for (auto* ch : c->getChildren()) find (ch); };
+        find (ed.get());
+        auto src = Desktop::getInstance().getMainMouseSource();
+        auto ev = [&] (Point<float> pos, Point<float> down, bool drag)
+        { return MouseEvent (src, pos, ModifierKeys (ModifierKeys::leftButtonModifier), 1.0f, 0, 0, 0, 0, tabs, tabs, Time::getCurrentTime(), down, Time::getCurrentTime(), 1, drag); };
+        // visible order: EQ DYN EX IM LOUD -> exciter is slot 2
+        const float exX = tabs->getWidth() * 0.0f;
+        (void) exX;
+        auto tabCentre = [&] (int slot) { const float w = jmin (200.0f, (tabs->getWidth() - 150.0f - 12.0f * 5) / 5.0f); return Point<float> (slot * (w + 12) + w * 0.5f, 26.0f); };
+        auto d0 = tabCentre (2);
+        tabs->mouseDown (ev (d0, d0, false));
+        tabs->mouseDrag (ev (tabCentre (1), d0, true));
+        tabs->mouseDrag (ev (tabCentre (0), d0, true));
+        tabs->mouseUp (ev (tabCentre (0), d0, true));
+        const auto o = p->getOrder();
+        check (o[0] == (int) Mod::Exciter && o[1] == (int) Mod::EQ, "dragging the EXCITER tab to the front reorders the chain ("
+               + String (o[0]) + String (o[1]) + String (o[2]) + String (o[3]) + String (o[4]) + ")");
+        auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
+        File f (File::getCurrentWorkingDirectory().getChildFile ("shot_reordered.png"));
         f.deleteFile(); FileOutputStream os (f); PNGImageFormat().writeImageToStream (img, os);
     }
     // screenshots of every page

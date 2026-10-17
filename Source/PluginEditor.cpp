@@ -1178,8 +1178,10 @@ ModuleTabs::ModuleTabs (MasterSuiteProcessor& p) : proc (p) { startTimerHz (10);
 /** only modules that are in the chain get a tab; the rest live behind "+ ADD MODULE" */
 std::vector<int> ModuleTabs::visible() const
 {
+    // tabs follow the real processing order; LOUDNESS is always the last stage
     std::vector<int> v;
-    for (int i = 0; i < (int) Mod::Count; ++i) if (proc.isInserted ((Mod) i)) v.push_back (i);
+    for (int m : proc.getOrder()) if (proc.isInserted ((Mod) m)) v.push_back (m);
+    v.push_back ((int) Mod::Loudness);
     return v;
 }
 bool ModuleTabs::canAdd() const { return visible().size() < (size_t) Mod::Count; }
@@ -1203,10 +1205,25 @@ Rectangle<float> ModuleTabs::cross (int slot) const { auto t = tab (slot); retur
 void ModuleTabs::paint (Graphics& g)
 {
     const auto v = visible();
+    const int dropSlot = dragSlot >= 0 && dragMoved ? slotForX (dragX) : -1;
+    if (dropSlot >= 0)
+    {   // insertion marker
+        const auto t = tab (dropSlot);
+        const float x = dropSlot > dragSlot ? t.getRight() + 6 : t.getX() - 6;
+        g.setColour (Colours::white.withAlpha (0.9f)); g.fillRoundedRectangle (x - 1.5f, 2.0f, 3.0f, (float) getHeight() - 4, 1.5f);
+    }
+    for (int pass = 0; pass < 2; ++pass)
     for (int s = 0; s < (int) v.size(); ++s)
     {
+        const bool isDragged = s == dragSlot && dragMoved;
+        if ((pass == 0) == isDragged) continue;            // dragged tab is painted last, on top
         const int i = v[(size_t) s];
-        const auto m = (Mod) i; const auto t = tab (s); const auto c = modColour (m);
+        const auto m = (Mod) i; auto t = tab (s); const auto c = modColour (m);
+        if (isDragged)
+        {
+            t = t.withX (jlimit (0.0f, (float) getWidth() - t.getWidth(), dragX - dragGrab));
+            g.setColour (Colours::black.withAlpha (0.5f)); g.fillRoundedRectangle (t.translated (0, 3), 6);
+        }
         const bool on = proc.get (String (modKey (m)) + "_on") > 0.5f;
         const bool sel = i == selected;
         g.setColour (sel ? col::panelHi : (s == hover ? Colour (0xff1f2328) : col::panel));
@@ -1218,18 +1235,24 @@ void ModuleTabs::paint (Graphics& g)
             g.setColour (col::textDim.withAlpha (0.6f));
             Path a; const float ax = t.getRight() + 2, ay = t.getCentreY(); a.addTriangle (ax, ay - 4, ax + 8, ay, ax, ay + 4); g.fillPath (a);
         }
-        const auto l = led (s);
+        const auto l = Rectangle<float> (t.getX() + 10, t.getCentreY() - 8, 16, 16);
         if (on) { g.setColour (c.withAlpha (0.3f)); g.fillEllipse (l.expanded (4)); }
         g.setColour (on ? c : Colour (0xff3b4047)); g.fillEllipse (l);
         g.setColour (Colours::black.withAlpha (0.6f)); g.drawEllipse (l, 1.0f);
         g.setColour (on ? col::text : col::textDim); g.setFont (font (14.0f));
         g.drawText (modName (m), t.withTrimmedLeft (34).withTrimmedRight (20).withTrimmedBottom (14), Justification::centredLeft, true);
         g.setColour (col::textDim.withAlpha (0.7f)); g.setFont (font (9.5f, false));
-        g.drawText (modIsCore (m) ? (on ? "core" : "core - bypassed") : (on ? "add-on" : "add-on - bypassed"),
+        g.drawText (m == Mod::Loudness ? (on ? "core - always last" : "core - bypassed") : modIsCore (m) ? (on ? "core" : "core - bypassed") : (on ? "add-on" : "add-on - bypassed"),
                     t.withTrimmedLeft (34).withTrimmedTop (24), Justification::centredLeft, true);
+        if (m != Mod::Loudness)
+        {   // drag grip
+            g.setColour (col::textDim.withAlpha (0.35f));
+            for (int d = 0; d < 3; ++d) for (int q = 0; q < 2; ++q)
+                g.fillEllipse (t.getRight() - (modIsCore (m) ? 14.0f : 34.0f) + (float) q * 4.0f, t.getCentreY() - 6 + (float) d * 5.0f, 2.2f, 2.2f);
+        }
         if (! modIsCore (m))
         {
-            const auto x = cross (s);
+            const auto x = Rectangle<float> (t.getRight() - 22, t.getY() + 4, 16, 16);
             g.setColour (col::textDim.withAlpha (hover == s ? 1.0f : 0.5f));
             g.drawLine (x.getX() + 4, x.getY() + 4, x.getRight() - 4, x.getBottom() - 4, 1.6f);
             g.drawLine (x.getRight() - 4, x.getY() + 4, x.getX() + 4, x.getBottom() - 4, 1.6f);
@@ -1286,8 +1309,53 @@ void ModuleTabs::mouseDown (const MouseEvent& e)
             const String id = String (modKey (m)) + "_on";
             proc.setParam (id, proc.get (id) > 0.5f ? 0.0f : 1.0f); repaint(); return;
         }
-        selected = i; if (onSelect) onSelect (i); repaint(); return;
+        selected = i; if (onSelect) onSelect (i);
+        if (m != Mod::Loudness) { dragSlot = s; dragMoved = false; dragX = e.position.x; dragGrab = e.position.x - tab (s).getX(); }
+        repaint(); return;
     }
+}
+
+int ModuleTabs::slotForX (float x) const
+{
+    // the dragged tab can land on any slot except after LOUDNESS (the last one)
+    const auto v = visible();
+    int best = 0; float bd = 1.0e9f;
+    for (int s = 0; s < (int) v.size() - 1; ++s) { const float d = std::abs (tab (s).getCentreX() - x); if (d < bd) { bd = d; best = s; } }
+    return best;
+}
+
+void ModuleTabs::mouseDrag (const MouseEvent& e)
+{
+    if (dragSlot < 0) return;
+    if (! dragMoved && e.getDistanceFromDragStart() < 6) return;
+    dragMoved = true; dragX = e.position.x;
+    setMouseCursor (MouseCursor::DraggingHandCursor);
+    repaint();
+}
+
+void ModuleTabs::mouseUp (const MouseEvent&)
+{
+    setMouseCursor (MouseCursor::NormalCursor);
+    if (dragSlot >= 0 && dragMoved)
+    {
+        const int to = slotForX (dragX);
+        auto v = visible(); v.pop_back();                  // movable, visible, in current order
+        if (to != dragSlot && to < (int) v.size())
+        {
+            const int moving = v[(size_t) dragSlot], target = v[(size_t) to];
+            auto full = proc.getOrder();
+            std::vector<int> o (full.begin(), full.end());
+            o.erase (std::find (o.begin(), o.end(), moving));
+            auto it = std::find (o.begin(), o.end(), target);
+            if (to > dragSlot) ++it;                       // dropped to the right: after the target
+            o.insert (it, moving);
+            std::array<int, MasterSuiteProcessor::numMovable> na {};
+            for (size_t k = 0; k < na.size(); ++k) na[k] = o[k];
+            proc.setOrder (na);
+        }
+    }
+    dragSlot = -1; dragMoved = false;
+    repaint();
 }
 } // namespace ui
 

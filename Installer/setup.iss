@@ -2,7 +2,7 @@
 ; GitHub Actions calls it with:
 ;   /DAppName="Opto Glow" /DArch=64 (or 32) /DAppIdGuid=... /DArtDir=...\Installer /DPluginDir=... /DOutName=...
 
-#define AppVersion   "1.1.0"
+#define AppVersion   "1.2.0"
 #define AppPublisher "ROHIT JI"
 #define AppIdFull    "{{" + AppIdGuid + "}"
 #define ArchLabel    Arch + "-bit"

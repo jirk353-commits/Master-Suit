@@ -263,6 +263,8 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override { hover = -1; repaint(); }
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
     int selected = 0;
     std::function<void (int)> onSelect;
 private:
@@ -273,6 +275,8 @@ private:
     juce::Rectangle<float> tab (int slot) const;
     juce::Rectangle<float> led (int slot) const;
     juce::Rectangle<float> cross (int slot) const;
+    int slotForX (float x) const;
+    int dragSlot = -1; bool dragMoved = false; float dragX = 0, dragGrab = 0;
     MasterSuiteProcessor& proc; int hover = -1;
 };
 } // namespace ui

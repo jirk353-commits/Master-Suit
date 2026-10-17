@@ -64,6 +64,11 @@ public:
     bool matchTarget();
     double getFs() const { return fs; }
 
+    /** processing order of the movable modules (Loudness is always last) */
+    static constexpr int numMovable = (int) Mod::Loudness;
+    std::array<int, numMovable> getOrder() const { std::array<int, numMovable> o; for (int i = 0; i < numMovable; ++i) o[(size_t) i] = order[i].load(); return o; }
+    void setOrder (const std::array<int, numMovable>&);
+
     // ---- meters for the editor (written by the audio thread) ----
     std::atomic<float> dynGr[4] {}, glueGr { 0 }, limGr { 0 };
     std::atomic<float> corr[4] {}, corrAll { 1 };
@@ -95,6 +100,9 @@ private:
     float corrAcc[3] {};
     float corrCoef = 0.0001f;
     int currentPreset = 0, osMax = 2048;
+    std::atomic<int> order[numMovable] { 0, 1, 2, 3, 4 };
+    std::vector<float> rScratch;
+    void processModule (Mod, float* L, float* R, int n, bool on);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MasterSuiteProcessor)
 };
